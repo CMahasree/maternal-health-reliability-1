@@ -1,0 +1,9 @@
+patient_id,scenario,ground_truth_reliable,ground_truth_alert
+P001,stable_normal,True,False
+P002,concerning_trend,True,True
+P003,multi_week_outage,False,False
+P004,manual_device_conflict,False,False
+P005,sensor_malfunction,False,False
+P006,irregular_timing,False,False
+P007,stable_normal,True,False
+P008,concerning_trend,True,True
