@@ -34,6 +34,7 @@ def build_evidence_chain(
     harm: HarmAssessment,
 ) -> EvidenceChain:
     """Build auditable evidence chain for clinical review."""
+    # 1. Capture primary source reading identifiers (limited to top 10 for compact audit representation)
     data_points = [
         {
             "reading_ids": trend.evidence_points[:10],
@@ -42,6 +43,7 @@ def build_evidence_chain(
         }
     ]
 
+    # 2. Format concise clinical summaries for each analytical stage
     trend_summary = (
         f"{trend.direction} trend (slope={trend.slope_per_day}/day, p={trend.p_value}), "
         f"concerning={trend.concerning}, n={trend.n_points}"
@@ -53,11 +55,13 @@ def build_evidence_chain(
         f"Total harm if acted upon={harm.total_harm_score}; {len(harm.harm_items)} risk factor(s)"
     )
 
+    # Composite high-level summary presented in clinicians' primary view
     summary = (
         f"Reliability {reliability.score}/100 ({reliability.label.value}); "
         f"{trend_summary}; {uncertainty_summary}"
     )
 
+    # 3. Merge data-level warnings and model rationales into a single explanation list
     quality_factors = quality.warnings + reliability.rationale
 
     return EvidenceChain(

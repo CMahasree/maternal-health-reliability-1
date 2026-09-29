@@ -34,9 +34,11 @@ def baseline_score(
     This naive approach ignores source conflicts, connectivity, and quality flags.
     """
     quality = check_quality(df, patient_id, metric)
-    # Baseline uses all readings including bad-quality (naive approach)
+    # Naive baseline: processes all observations unfiltered without excluding suspect/bad quality flags
     trend = detect_trend(df, patient_id, metric, exclude_bad_quality=False)
 
+    # Conventional completeness-only rule: assumes data is trustworthy if missingness <= 20%
+    # This exposes a critical blind spot for sensor step-changes and conflicting manual entries
     reliable_enough = quality.missing_rate <= BASELINE_MISSING_DATA_THRESHOLD
     alert = reliable_enough and trend.concerning
 

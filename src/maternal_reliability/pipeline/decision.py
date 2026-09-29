@@ -45,6 +45,8 @@ def make_decision(
     t = THRESHOLDS
     fallback_actions: list[str] = []
 
+    # Priority 1: Safe fallback gating (<50 reliability)
+    # When data quality is critically compromised, trend alerts must be unconditionally suppressed.
     if reliability.score < t.caution_min:
         outcome = DecisionOutcome.SAFE_FALLBACK
         alert = False
@@ -58,6 +60,7 @@ def make_decision(
             "Collect 3 consecutive daily readings before re-assessment",
             "Do NOT schedule clinic visit based on current trend",
         ]
+    # Priority 2: Actionable clinical alert (triple conjunction: trend + reliability >= 70 + confidence >= 60)
     elif trend.concerning and reliability.score >= t.actionable_min and uncertainty.confidence >= 60:
         outcome = DecisionOutcome.ACTIONABLE
         alert = True
@@ -66,6 +69,7 @@ def make_decision(
             f"with adequate reliability ({reliability.score}/100). Recommend clinical follow-up."
         )
         fallback_actions = ["Schedule clinic review within 48 hours"]
+    # Priority 3: Caution / verification (trend detected but reliability or confidence is borderline)
     elif trend.concerning and reliability.score >= t.caution_min:
         outcome = DecisionOutcome.CAUTION
         alert = False
@@ -78,12 +82,14 @@ def make_decision(
             "Compare manual and device readings",
             "Escalate to clinician if second reading confirms trend",
         ]
+    # Priority 4: Not actionable (stable/normal or insufficient data without clinical concern)
     else:
         outcome = DecisionOutcome.NOT_ACTIONABLE
         alert = False
         message = "No actionable concerning trend at current data quality."
         fallback_actions = ["Continue routine monitoring per care plan"]
 
+    # If harm analysis indicates elevated downstream risk, inject harm warning at top of action list
     if harm.total_harm_score > 15 and outcome != DecisionOutcome.ACTIONABLE:
         fallback_actions.insert(0, harm.recommendation)
 

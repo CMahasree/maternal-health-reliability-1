@@ -38,6 +38,9 @@ def assess_harm(
     items: list[dict] = []
     total = 0.0
 
+    # Scenario 1: False Positive Alert Harm
+    # If a concerning trend is acted upon when data reliability is low (<70), costs scale
+    # proportionally with unreliability (1 - reliability/100).
     if trend.concerning and reliability.score < 70:
         # Acting on unreliable concerning trend → false alarm harm
         visit_harm = costs.unnecessary_clinic_visit * (1 - reliability.score / 100)
@@ -53,6 +56,8 @@ def assess_harm(
         ])
         total += visit_harm + anxiety + resource
 
+    # Scenario 2: Indecision / Delay Risk
+    # Adequate reliability (>=70) and concerning trend, but low trend statistical confidence (<60)
     if trend.concerning and reliability.score >= 70 and uncertainty.confidence < 60:
         delay = costs.delayed_real_action * 0.3
         items.append({
@@ -61,6 +66,8 @@ def assess_harm(
         })
         total += delay
 
+    # Scenario 3: Masked Emergence / False Negative Risk
+    # Severe data degradation (<50) with no trend detected: gaps or outages may hide a real acute event
     if not trend.concerning and reliability.score < 50:
         miss_risk = costs.delayed_real_action * 0.5
         items.append({

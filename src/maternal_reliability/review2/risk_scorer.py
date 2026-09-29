@@ -99,6 +99,7 @@ def score_risk(df: pd.DataFrame, patient_id: str) -> RiskResult:
     spo2 = _recent_median(df, patient_id, "spo2_pct")
     wt_gain = _weekly_weight_gain(df, patient_id)
 
+    # 1. Evaluate cross-sectional biometrics against clinical guideline bands
     pairs = [
         ("systolic_bp", sbp, SYSTOLIC_BP_MMHG),
         ("diastolic_bp", dbp, DIASTOLIC_BP_MMHG),
@@ -118,10 +119,12 @@ def score_risk(df: pd.DataFrame, patient_id: str) -> RiskResult:
         contribs.append(ParameterContribution(name, value, band.name, band.action))
         sev = SEVERITY[band.name]
         max_sev = max(max_sev, sev)
+        # Point accumulation: low risk = 0, medium risk = 2, high risk = 5 points
         points += {1: 0, 2: 2, 3: 5}[sev]
         if band.name != "low":
             rationale.append(f"{name}={value:.1f} → {band.name}")
 
+    # 2. Evaluate weekly rate of gestational weight gain (IOM guidance proxy)
     wt_band = band_for_value(WEIGHT_GAIN_KG_PER_WEEK, wt_gain) if wt_gain is not None else None
     contribs.append(
         ParameterContribution(
@@ -133,16 +136,19 @@ def score_risk(df: pd.DataFrame, patient_id: str) -> RiskResult:
     )
     if wt_band:
         max_sev = max(max_sev, SEVERITY[wt_band.name])
+        # Weight gain points: low=0, medium=1, high=3 points
         points += {1: 0, 2: 1, 3: 3}[SEVERITY[wt_band.name]]
         if wt_band.name != "low":
             rationale.append(f"weight gain {wt_gain:.2f} kg/week → {wt_band.name}")
 
+    # 3. Incorporate longitudinal trend dynamics (+2 points per concerning trend)
     for metric in ("systolic_bp", "diastolic_bp", "blood_glucose_mgdl"):
         trend = detect_trend(df, patient_id, metric)
         if trend.concerning:
             points += 2
             rationale.append(f"concerning {metric} trend (slope {trend.slope_per_day}/day)")
 
+    # 4. Multi-parameter clinical risk categorization based on point thresholds and max severity
     if points >= 8 or max_sev >= 3:
         predicted = "high"
     elif points >= 3 or max_sev >= 2:
@@ -150,14 +156,18 @@ def score_risk(df: pd.DataFrame, patient_id: str) -> RiskResult:
     else:
         predicted = "low"
 
+    # 5. Reliability Gating (Safety Layer):
+    # Prevents noisy or corrupt remote sensor data from triggering false alarms
     gated = False
     if reliability.reliability.score < 50:
+        # Hard fallback: data quality insufficient to assert any clinical action
         gated = True
         predicted = "indeterminate"
         rationale.append(
             f"reliability {reliability.reliability.score} < 50 — safe fallback, no risk action"
         )
     elif reliability.reliability.score < 70 and predicted == "high":
+        # Step-down protection: high risk downgraded to medium unless acute severe-range BP is confirmed
         # Severe-range BP with moderate reliability stays high; otherwise step down.
         sbp_band = band_for_value(SYSTOLIC_BP_MMHG, sbp)
         dbp_band = band_for_value(DIASTOLIC_BP_MMHG, dbp)

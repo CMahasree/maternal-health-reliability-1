@@ -58,12 +58,13 @@ def detect_trend(
             window_end=None,
         )
 
+    # 1. Isolate recent time window (default 14 days) relative to the most recent measurement
     subset = subset.sort_values("timestamp")
     end = subset["timestamp"].max()
     start = end - pd.Timedelta(days=window_days)
     window = subset[subset["timestamp"] >= start]
 
-    # Prefer device readings; optionally exclude bad quality
+    # 2. Prioritize clean device readings: exclude bad-quality records and prefer automated device data
     if exclude_bad_quality and "quality_label" in window.columns:
         window = window[window["quality_label"] != "bad"]
     if "source" in window.columns:
@@ -71,6 +72,7 @@ def detect_trend(
         if len(device) >= cfg.min_points:
             window = device
 
+    # 3. Enforce statistical power threshold: minimum 5 valid observations required
     n = len(window)
     if n < cfg.min_points:
         return TrendResult(
@@ -86,13 +88,16 @@ def detect_trend(
             window_end=end,
         )
 
+    # 4. Fit linear regression over time axis converted to fractional days
     t0 = window["timestamp"].min()
     x = (window["timestamp"] - t0).dt.total_seconds() / 86400.0
     y = window["value"].values
 
     slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+    # A statistically meaningful trend requires significance (p < 0.05) and moderate correlation (|r| > 0.3)
     has_trend = p_value < cfg.significance_p_value and abs(r_value) > 0.3
 
+    # Direction categorization based on daily rate of change
     if slope > 0.05:
         direction = "rising"
     elif slope < -0.05:
@@ -100,6 +105,7 @@ def detect_trend(
     else:
         direction = "stable"
 
+    # 5. Evaluate clinical concern against guideline-derived daily slope thresholds
     concerning = False
     if metric == "systolic_bp" and slope >= cfg.concerning_slope_bp_per_day and has_trend:
         concerning = True

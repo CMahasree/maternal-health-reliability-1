@@ -66,6 +66,8 @@ def check_quality(df: pd.DataFrame, patient_id: str, metric: str) -> QualityRepo
     n = len(subset)
     n_gaps = int(subset["is_gap"].sum()) if "is_gap" in subset.columns else 0
 
+    # Compute missingness rate by comparing actual reading count against expected count
+    # for this metric over the patient's active monitoring span in days.
     if "timestamp" in subset.columns and n >= 2:
         span_days = (subset["timestamp"].max() - subset["timestamp"].min()).days + 1
         expected = EXPECTED_INTERVAL_HOURS.get(metric, 24.0)
@@ -74,7 +76,8 @@ def check_quality(df: pd.DataFrame, patient_id: str, metric: str) -> QualityRepo
     else:
         missing_rate = 0.0 if n > 0 else 1.0
 
-    # Regularity: coefficient of variation of inter-reading intervals
+    # Regularity: coefficient of variation (CV = std / mean) of inter-reading intervals in hours.
+    # Regular daily readings yield low CV (~0); erratic clustering or burstiness approaches 1.0.
     if n >= 3:
         intervals = subset["timestamp"].sort_values().diff().dt.total_seconds().dropna() / 3600.0
         if len(intervals) > 0 and intervals.mean() > 0:
@@ -82,12 +85,14 @@ def check_quality(df: pd.DataFrame, patient_id: str, metric: str) -> QualityRepo
         else:
             irregularity_score = 0.5
     else:
+        # Penalize insufficient series length (<3 points cannot establish temporal rhythm)
         irregularity_score = 0.8 if n < 3 else 0.0
 
     bad_quality_rate = float((subset["quality_label"].isin(["bad", "suspect"])).mean())
     offline_rate = float((subset["connectivity_status"] == "offline").mean())
 
-    # Source conflict: manual vs nearest prior device within 48h with >10% relative difference
+    # Source conflict: compare manual/health-worker observations with the nearest device reading
+    # taken within a 48-hour window. If relative divergence > 10%, flag as a conflict.
     source_conflict = False
     conflict_details = ""
     device = subset[subset["source"] == "device"].sort_values("timestamp")
@@ -112,7 +117,7 @@ def check_quality(df: pd.DataFrame, patient_id: str, metric: str) -> QualityRepo
                     )
                     break
 
-    # Stale data check
+    # Stale data check: determine if monitoring has lapsed beyond operational freshness limit
     latest = subset["timestamp"].max()
     now = pd.Timestamp.now(tz="UTC")
     stale_hours = (now - latest).total_seconds() / 3600.0
@@ -128,10 +133,12 @@ def check_quality(df: pd.DataFrame, patient_id: str, metric: str) -> QualityRepo
     anomaly_details = ""
     if n >= 5:
         vals = subset.sort_values("timestamp")["value"].values.astype(float)
+        # Relative jump between adjacent time points
         rel_jumps = np.abs(np.diff(vals)) / np.maximum(np.abs(vals[:-1]), 1.0)
         max_idx = int(np.argmax(rel_jumps))
         max_jump = float(rel_jumps[max_idx])
 
+        # Flag only when jump exceeds 20% AND substantially exceeds baseline inter-reading jump noise
         if max_jump > 0.20:
             prior_jumps = rel_jumps[:max_idx] if max_idx > 0 else rel_jumps[1:]
             prior_median = float(np.median(prior_jumps)) if len(prior_jumps) > 0 else 0.0

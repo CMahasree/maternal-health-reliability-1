@@ -28,16 +28,20 @@ def quantify_uncertainty(reliability: ReliabilityScore, trend: TrendResult) -> U
     High reliability + significant trend = higher confidence.
     Low reliability or weak trend = lower confidence with explicit factors.
     """
+    # 1. Base confidence is driven by underlying data reliability (scale 0.0 - 1.0)
     rel_factor = reliability.score / 100.0
     trend_factor = 1.0
 
+    # 2. Penalize statistical instability: small sample size (<5 points) cannot confirm slope
     if trend.n_points < 5:
         trend_factor *= 0.5
+    # 3. Penalize high regression p-values: trends failing alpha=0.05 are discounted
     if trend.p_value >= 0.05:
         trend_factor *= 0.6
     elif trend.p_value >= 0.01:
         trend_factor *= 0.85
 
+    # 4. Multiplicative confidence: confidence cannot exceed the reliability of input telemetry
     confidence = 100.0 * rel_factor * trend_factor
     confidence = min(confidence, reliability.score)
 

@@ -23,6 +23,7 @@ def _src_bytes() -> int:
 
 def process_cpu_seconds() -> float:
     """Process CPU time (user + kernel) in seconds — measured, not estimated."""
+    # Strategy 1 (Windows): Query kernel32.GetProcessTimes to capture exact user and kernel CPU ticks
     try:
         import ctypes
         import ctypes.wintypes
@@ -63,6 +64,7 @@ def process_cpu_seconds() -> float:
             return _filetime_seconds(kernel) + _filetime_seconds(user)
     except Exception:
         pass
+    # Strategy 2 (POSIX / Linux / macOS): Query resource.getrusage for user + system CPU time
     try:
         import resource
 
@@ -70,6 +72,7 @@ def process_cpu_seconds() -> float:
         return float(usage.ru_utime + usage.ru_stime)
     except Exception:
         pass
+    # Strategy 3 (Fallback): Python standard library process_time
     return time.process_time()
 
 
@@ -206,19 +209,23 @@ def benchmark_scoring(readings: pd.DataFrame, patient_ids: list[str], repeats: i
 
 def connectivity_impact(readings: pd.DataFrame, patient_ids: list[str]) -> dict:
     """Evaluate online, intermittent, and offline connectivity separately (not combined)."""
+    # 1. Tally raw volume of readings across network states
     status_counts = {
         str(k): int(v) for k, v in readings["connectivity_status"].value_counts().to_dict().items()
     }
     for key in ("online", "intermittent", "offline"):
         status_counts.setdefault(key, 0)
 
+    # 2. Partition dataset into mutually exclusive connectivity slices for ablation
     online = readings[readings["connectivity_status"] == "online"].copy()
     intermittent = readings[readings["connectivity_status"] == "intermittent"].copy()
     offline = readings[readings["connectivity_status"] == "offline"].copy()
 
+    # 3. Score the full mixed dataset (on-device store) vs purely online sync stream
     full_scores, time_all, cpu_all = _score_all(readings, patient_ids)
     online_scores, time_online, cpu_online = _score_all(online, patient_ids)
 
+    # Compare label stability between full store and online baseline
     online_vs_full = _label_delta(full_scores, online_scores, patient_ids, "online_baseline")
     online_report = {
         "name": "online_baseline",

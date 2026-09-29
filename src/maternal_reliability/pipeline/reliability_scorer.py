@@ -51,6 +51,7 @@ def score_reliability(quality: QualityReport) -> ReliabilityScore:
     - 50-69: LOW (caution)
     - < 50: UNRELIABLE (safe fallback)
     """
+    # 1. Compute normalized 0-100 component sub-scores from quality metrics
     t = THRESHOLDS
     components = {
         "completeness": _component_completeness(quality.missing_rate),
@@ -60,6 +61,7 @@ def score_reliability(quality: QualityReport) -> ReliabilityScore:
         "quality_flags": _component_quality(quality.bad_quality_rate),
     }
 
+    # 2. Weighted linear combination according to clinically established weights
     score = (
         t.weight_completeness * components["completeness"]
         + t.weight_regularity * components["regularity"]
@@ -68,9 +70,12 @@ def score_reliability(quality: QualityReport) -> ReliabilityScore:
         + t.weight_quality_flags * components["quality_flags"]
     )
 
+    # 3. Apply baseline constraint caps before diagnostic feedback
+    # Enforce minimum sample size (<3 readings cannot statistically support trend slope)
     if quality.n_readings < 3:
         score = min(score, 40.0)
 
+    # Data older than 72 hours cannot support fresh clinical decision-making
     if quality.stale:
         score = min(score, 55.0)
 
@@ -86,16 +91,21 @@ def score_reliability(quality: QualityReport) -> ReliabilityScore:
     if quality.bad_quality_rate > 0.2:
         rationale.append(f"Quality flags on {quality.bad_quality_rate:.0%} of readings")
 
+    # 4. Enforce domain-specific safety caps:
+    # Critical data threats override the weighted sum to prevent false confidence
     # Cap score when significant bad-quality or conflict signals present
     if quality.bad_quality_rate > 0.25:
         score = min(score, 55.0)
         if "High proportion of bad/suspect readings" not in rationale:
             rationale.append("High proportion of bad/suspect readings")
     if quality.source_conflict:
+        # Prevent actionable status (>=70) when manual and device measurements contradict
         score = min(score, 60.0)
     if quality.missing_rate > 0.35:
+        # Severe missingness limits decision to UNRELIABLE/LOW boundary
         score = min(score, 50.0)
     if quality.sensor_anomaly:
+        # Isolated step-jumps indicate potential sensor glitch; cap at caution level
         score = min(score, 55.0)
         rationale.append(f"Sensor anomaly: {quality.anomaly_details}")
     if quality.stale:
@@ -103,6 +113,7 @@ def score_reliability(quality: QualityReport) -> ReliabilityScore:
     if quality.n_readings < 3:
         rationale.append(f"Insufficient readings ({quality.n_readings}) for reliable trend")
 
+    # 5. Map final score to actionable reliability category bands
     if score >= t.high_min:
         label = ReliabilityLabel.HIGH
     elif score >= t.actionable_min:
